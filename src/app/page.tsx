@@ -191,7 +191,7 @@ export default function CodeEditor() {
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     <div className="text-center">
                       <p className="text-lg mb-2">Ready to execute</p>
-                      <p className="text-sm">Click "Run Code" to see the output here</p>
+                      <p className="text-sm">Click {"Run Code"} to see the output here</p>
                     </div>
                   </div>
                 )}

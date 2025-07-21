@@ -43,7 +43,8 @@ export default function CodeEditor() {
 
     try {
       // Use relative URL for better compatibility
-      const response = await fetch('http://localhost:8001/execute', {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001'
+      const response = await fetch('${backendUrl}/execute', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

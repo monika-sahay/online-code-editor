@@ -19,6 +19,7 @@ app.add_middleware(
     allow_origins=[
         "*",  # Allow all origins for maximum compatibility
         "https://*.vercel.app",
+        "https://online-code-editor-nine-chi.vercel.app"
         "https://*.csb.app",
         "http://localhost:8000",
         "http://localhost:3000",

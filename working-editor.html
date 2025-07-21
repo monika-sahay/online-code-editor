@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Code Editor - Working Version</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .editor-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            height: 70vh;
+        }
+        .editor, .output {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .editor h3, .output h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        textarea {
+            width: 100%;
+            height: calc(100% - 60px);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            resize: none;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .output-content {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            height: calc(100% - 60px);
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            white-space: pre-wrap;
+        }
+        .error {
+            color: #dc3545;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+        }
+        .success {
+            color: #155724;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+        }
+        .loading {
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Python Code Editor</h1>
+            <p>Write and execute Python code in your browser</p>
+        </div>
+        
+        <div class="editor-container">
+            <div class="editor">
+                <h3>Python Code</h3>
+                <textarea id="code" placeholder="Enter your Python code here...">print("Hello, World!")
+print("This is working perfectly!")
+print("2 + 3 =", 2 + 3)
+print("Python is running successfully!")
+</textarea>
+                <div style="margin-top: 10px;">
+                    <button onclick="executeCode()">Run Code</button>
+                    <button onclick="testConnection()">Test Connection</button>
+                    <button onclick="clearOutput()">Clear</button>
+                </div>
+            </div>
+            
+            <div class="output">
+                <h3>Output</h3>
+                <div id="output" class="output-content">
+                    Click "Run Code" to see output here
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function executeCode() {
+            const code = document.getElementById('code').value;
+            const output = document.getElementById('output');
+            
+            if (!code.trim()) {
+                output.innerHTML = '<div class="error">Please enter some code</div>';
+                return;
+            }
+
+            output.innerHTML = '<div class="loading">Executing code...</div>';
+
+            try {
+                console.log('Sending request to backend...');
+                const response = await fetch('http://localhost:8001/execute', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ code }),
+                });
+
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.success) {
+                    output.innerHTML = `<div class="success">${data.output || 'Code executed successfully'}</div>`;
+                } else {
+                    output.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Full error:', error);
+                output.innerHTML = `<div class="error">Network Error: ${error.message}<br><br>
+                    Make sure:<br>
+                    1. Backend is running on port 8001<br>
+                    2. No firewall blocking<br>
+                    3. Try refreshing the page</div>`;
+            }
+        }
+
+        async function testConnection() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<div class="loading">Testing connection...</div>';
+            
+            try {
+                const response = await fetch('http://localhost:8001/');
+                const text = await response.text();
+                output.innerHTML = `<div class="success">✅ Backend is running: ${text}</div>`;
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Connection failed: ${error.message}<br>
+                    Make sure backend is running: uvicorn main:app --host 0.0.0.0 --port 8001</div>`;
+            }
+        }
+
+        function clearOutput() {
+            document.getElementById('output').innerHTML = 'Click "Run Code" to see output here';
+        }
+
+        // Test connection on page load
+        window.addEventListener('load', () => {
+            console.log('Page loaded, testing connection...');
+            testConnection();
+        });
+    </script>
+</body>
+</html>

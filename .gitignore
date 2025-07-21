@@ -1,8 +1,6 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
+# === Node / Next.js ===
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -10,32 +8,90 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
+# Next.js output
+.next/
+out/
+.build/
+.vercel
 
-# next.js
-/.next/
-/out/
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
 
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
+# Testing & Coverage
+coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# Environment
 .env*
+.DS_Store
+*.pem
 
-# vercel
-.vercel
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+MANIFEST
+*.spec
+pip-log.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.cache
+.pytest_cache/
+.coverage.*
+nosetests.xml
+*.cover
+*.py.cover
+.hypothesis/
+cover/
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+.pybuilder/
+target/
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+.python-version
+.envrc
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.spyderproject
+.spyproject
+.ropeproject
+.site
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+cython_debug/
+.pypirc
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# === Tools ===
+.ruff_cache/
+.pdm-python
+.pdm-build/
+.pixi
+__pypackages__/
+.abstra/
+.cursorignore
+.cursorindexingignore
+
+# Optional (IDE-related)
+.vscode/
+.idea/

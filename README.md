@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Online Code Editor
 
 A minimal full-stack online code editor that supports Python execution via FastAPI + Docker sandboxing, with a modern React frontend using Monaco Editor.
@@ -230,3 +231,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Next.js](https://nextjs.org/) for the frontend framework
 - [Tailwind CSS](https://tailwindcss.com/) for styling
 - [shadcn/ui](https://ui.shadcn.com/) for UI components
+=======
+# online-code-editor
+>>>>>>> c9c700222ee115e985eebe2f8a019ec08119e092

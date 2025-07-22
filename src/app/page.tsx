@@ -43,8 +43,12 @@ export default function CodeEditor() {
 
     try {
       // Use relative URL for better compatibility
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001'
-      const response = await fetch('${backendUrl}/execute', {
+      const BACKEND_URL =
+  process.env.NODE_ENV === 'production'
+    ? 'https://online-code-editor-idoc.onrender.com/execute'
+    : 'http://localhost:8001/execute'
+
+      const response = await fetch(`${BACKEND_URL}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

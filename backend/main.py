@@ -12,20 +12,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Code Execution API", version="1.0.0")
+origins = [
+    "https://online-code-editor-nine-chi.vercel.app", 
+    "https://*.vercel.app",                             # optional wildcard
+    "https://*.onrender.com",                           # allow Render backend
+    "http://localhost:8000",                            # local frontend
+    "http://localhost:3000",                            # local frontend alt
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:3000"
+]
 
 # Add CORS middleware - allow all origins including Vercel
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*",  # Allow all origins for maximum compatibility
-        "https://*.vercel.app",
-        "https://online-code-editor-nine-chi.vercel.app"
-        "https://*.csb.app",
-        "http://localhost:8000",
-        "http://localhost:3000",
-        "http://127.0.0.1:8000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

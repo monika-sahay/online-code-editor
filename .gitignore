@@ -95,3 +95,4 @@ __pypackages__/
 # Optional (IDE-related)
 .vscode/
 .idea/
+.next

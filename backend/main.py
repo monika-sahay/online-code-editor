@@ -15,7 +15,9 @@ app = FastAPI(title="Code Execution API", version="1.0.0")
 origins = [
     "https://online-code-editor-nine-chi.vercel.app", 
     "https://*.vercel.app",                             # optional wildcard
-    "https://*.onrender.com",                           # allow Render backend
+    "https://*.onrender.com", 
+    "https://freeonlineeditor.co.uk",
+    "https://www.freeonlineeditor.co.uk",                          # allow Render backend
     "http://localhost:8000",                            # local frontend
     "http://localhost:3000",                            # local frontend alt
     "http://127.0.0.1:8000",

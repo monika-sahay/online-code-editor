@@ -46,9 +46,9 @@ export default function CodeEditor() {
       const BACKEND_URL =
   process.env.NODE_ENV === 'production'
     ? 'https://online-code-editor-idoc.onrender.com/execute'
-    : 'http://localhost:8001/execute'
+    : 'https://2jfjkj-8001.csb.app/'
 
-      const response = await fetch(`${BACKEND_URL}/execute`, {
+      const response = await fetch(`${BACKEND_URL}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { Button } from "@/components/ui/button";

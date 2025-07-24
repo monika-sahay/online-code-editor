@@ -151,8 +151,9 @@ async def ai_complete(request: Request):
     )
 
     # Call OpenAI ChatCompletion API
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",  # or "gpt-3.5-turbo" for cheaper
+    client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    response = client.chat.completions.create(
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a helpful coding assistant."},
             {"role": "user", "content": prompt}
@@ -160,8 +161,6 @@ async def ai_complete(request: Request):
         max_tokens=48,
         temperature=0.2
     )
-
-    # Extract the suggestion from the AI's response
     suggestion = response.choices[0].message.content.strip()
 
     return {"suggestion": suggestion}

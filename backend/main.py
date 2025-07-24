@@ -6,7 +6,11 @@ import tempfile
 import os
 import json
 import logging
+from fastapi import Request
+import os
+import openai
 
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -127,6 +131,41 @@ async def execute_code(request: CodeRequest):
                 logger.info(f"Cleaned up temporary directory: {temp_dir}")
             except Exception as e:
                 logger.error(f"Failed to clean up temporary directory: {e}")
+
+@app.post("/ai-complete")
+async def ai_complete(request: Request):
+    """
+    Given the code and (optional) cursor position, return an AI suggestion/completion.
+    """
+    data = await request.json()
+    code = data.get("code", "")
+    cursor_offset = data.get("cursorOffset")  # Optional: can use for context
+
+    if not code.strip():
+        return {"suggestion": ""}
+
+    # Build a prompt for the AI model
+    prompt = (
+        "You are a coding assistant. Suggest the next line or completion for the following code:\n"
+        f"{code}\n# Suggest code completion below:\n"
+    )
+
+    # Call OpenAI ChatCompletion API
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",  # or "gpt-3.5-turbo" for cheaper
+        messages=[
+            {"role": "system", "content": "You are a helpful coding assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=48,
+        temperature=0.2
+    )
+
+    # Extract the suggestion from the AI's response
+    suggestion = response.choices[0].message.content.strip()
+
+    return {"suggestion": suggestion}
+
 
 if __name__ == "__main__":
     import uvicorn

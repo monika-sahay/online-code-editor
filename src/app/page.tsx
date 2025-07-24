@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Editor, { monaco } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -165,24 +165,47 @@ export default function CodeEditor() {
             <CardContent className="flex-1 p-0">
               <div className="h-full border rounded-md overflow-hidden">
                 <Editor
-                  height="100%"
+                  height="500px"
                   defaultLanguage="python"
+                  defaultValue="print('Hello')"
                   value={code}
-                  onChange={(value) => setCode(value || "")}
-                  onMount={(editor) => {
+                  onChange={(value) => setCode(value ?? "")}
+                  onMount={(editor, monaco) => {
                     editorRef.current = editor;
+                    // Register completion provider here!
+                    monaco.languages.registerCompletionItemProvider("python", {
+                      triggerCharacters: ["\n", " ", ".", ":"],
+                      provideCompletionItems: async (model, position) => {
+                        const code = model.getValue();
+                        const cursorOffset = model.getOffsetAt(position);
+                        const AI_AUTOCOMPLETE_URL =
+                          process.env.NODE_ENV === "production"
+                            ? "https://online-code-editor-idoc.onrender.com/ai-complete"
+                            : "https://2jfjkj-8001.csb.app/ai-complete";
+                        const response = await fetch(AI_AUTOCOMPLETE_URL, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ code, cursorOffset }),
+                        });
+                        const data = await response.json();
+
+                        return {
+                          suggestions: [
+                            {
+                              label: "AI Suggestion",
+                              kind: monaco.languages.CompletionItemKind.Snippet,
+                              insertText: data.suggestion,
+                              range: model.getWordUntilPosition(position),
+                              documentation: "Powered by OpenAI",
+                            },
+                          ],
+                        };
+                      },
+                    });
                   }}
                   theme="vs-dark"
                   options={{
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                    lineNumbers: "on",
-                    roundedSelection: false,
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                    tabSize: 4,
-                    insertSpaces: true,
-                    wordWrap: "on",
+                    fontSize: 16,
                     minimap: { enabled: false },
                     suggestOnTriggerCharacters: true,
                   }}

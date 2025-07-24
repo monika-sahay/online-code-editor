@@ -169,7 +169,12 @@ export default function CodeEditor() {
                               label: "AI Suggestion",
                               kind: monaco.languages.CompletionItemKind.Snippet,
                               insertText: data.suggestion,
-                              range: model.getWordUntilPosition(position),
+                              range: {
+                                startLineNumber: position.lineNumber,
+                                endLineNumber: position.lineNumber,
+                                startColumn: position.column,
+                                endColumn: position.column,
+                              },
                               documentation: "Powered by OpenAI",
                             },
                           ],

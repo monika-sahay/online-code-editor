@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import type * as MonacoType from "monaco-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -86,7 +87,9 @@ export default function CodeEditor() {
     setOutput("");
     setError("");
   };
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(
+    null
+  );
 
   useEffect(() => {
     monaco.init().then((monacoInstance) => {
@@ -97,7 +100,11 @@ export default function CodeEditor() {
           const cursorOffset = model.getOffsetAt(position);
 
           // Call your FastAPI AI endpoint
-          const response = await fetch("http://localhost:8000/ai-complete", {
+          const AI_AUTOCOMPLETE_URL =
+            process.env.NODE_ENV === "production"
+              ? "https://online-code-editor-idoc.onrender.com/ai-complete"
+              : "https://2jfjkj-8001.csb.app/ai-complete";
+          const response = await fetch(AI_AUTOCOMPLETE_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ code, cursorOffset }),
@@ -170,7 +177,10 @@ export default function CodeEditor() {
                   defaultValue="print('Hello')"
                   value={code}
                   onChange={(value) => setCode(value ?? "")}
-                  onMount={(editor, monaco) => {
+                  onMount={(
+                    editor: MonacoType.editor.IStandaloneCodeEditor,
+                    monaco: typeof MonacoType
+                  ) => {
                     editorRef.current = editor;
                     // Register completion provider here!
                     monaco.languages.registerCompletionItemProvider("python", {

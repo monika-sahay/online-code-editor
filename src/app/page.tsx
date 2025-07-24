@@ -91,42 +91,6 @@ export default function CodeEditor() {
     null
   );
 
-  useEffect(() => {
-    monaco.init().then((monacoInstance) => {
-      monacoInstance.languages.registerCompletionItemProvider("python", {
-        triggerCharacters: ["\n", " ", ".", ":"],
-        provideCompletionItems: async (model, position) => {
-          const code = model.getValue();
-          const cursorOffset = model.getOffsetAt(position);
-
-          // Call your FastAPI AI endpoint
-          const AI_AUTOCOMPLETE_URL =
-            process.env.NODE_ENV === "production"
-              ? "https://online-code-editor-idoc.onrender.com/ai-complete"
-              : "https://2jfjkj-8001.csb.app/ai-complete";
-          const response = await fetch(AI_AUTOCOMPLETE_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code, cursorOffset }),
-          });
-          const data = await response.json();
-
-          return {
-            suggestions: [
-              {
-                label: "AI Suggestion",
-                kind: monacoInstance.languages.CompletionItemKind.Snippet,
-                insertText: data.suggestion,
-                range: model.getWordUntilPosition(position),
-                documentation: "Powered by OpenAI",
-              },
-            ],
-          };
-        },
-      });
-    });
-  }, []);
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}

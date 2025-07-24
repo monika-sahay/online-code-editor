@@ -153,7 +153,7 @@ async def ai_complete(request: Request):
     # Call OpenAI ChatCompletion API
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",   # or "gpt-3.5-turbo-instruct-0914"
         messages=[
             {"role": "system", "content": "You are a helpful coding assistant."},
             {"role": "user", "content": prompt}

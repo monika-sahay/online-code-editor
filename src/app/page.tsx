@@ -27,8 +27,9 @@ const defaultR = `# Welcome to the Online R Code Editor
 
 cat("Hello, World!\\n")
 cat("This is working perfectly!\\n")
+
 x <- 10; y <- 5
-cat(x, "", y, "=", x  y, "\\n")
+cat(x, "+", y, "=", x + y, "\\n")
 cat(x, "*", y, "=", x * y, "\\n")
 `;
 

@@ -1,13 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 
-const defaultCode = `# Welcome to the Online Python Code Editor
+type Language = "python" | "r";
+
+const defaultPy = `# Welcome to the Online Python Code Editor
 # Write your Python code below and click "Run Code" to execute
 
 print("Hello, World!")
@@ -16,8 +18,18 @@ print("This is working perfectly!")
 # Try some calculations
 x = 10
 y = 5
-print(f"{x} + {y} = {x + y}")
+print(f"{x}  {y} = {x  y}")
 print(f"{x} * {y} = {x * y}")
+`;
+
+const defaultR = `# Welcome to the Online R Code Editor
+# Write your R code below and click "Run Code" to execute
+
+cat("Hello, World!\\n")
+cat("This is working perfectly!\\n")
+x <- 10; y <- 5
+cat(x, "", y, "=", x  y, "\\n")
+cat(x, "*", y, "=", x * y, "\\n")
 `;
 
 interface ExecutionResult {
@@ -27,10 +39,16 @@ interface ExecutionResult {
 }
 
 export default function CodeEditor() {
-  const [code, setCode] = useState<string>(defaultCode);
+  const [language, setLanguage] = useState<Language>("python");
+  const [code, setCode] = useState<string>(defaultPy);
   const [output, setOutput] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+
+  // When language changes, swap in the matching default snippet (optional)
+  useEffect(() => {
+    setCode(language === "python" ? defaultPy : defaultR);
+  }, [language]);
 
   const executeCode = async () => {
     if (!code.trim()) {
@@ -47,14 +65,14 @@ export default function CodeEditor() {
       const BACKEND_URL =
         process.env.NODE_ENV === "production"
           ? "https://online-code-editor-idoc.onrender.com/execute"
-          : "https://2jfjkj-8001.csb.app/";
+          : "https://2jfjkj-8001.csb.app/execute";
 
       const response = await fetch(`${BACKEND_URL}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, language }),
       });
 
       if (!response.ok) {
@@ -102,7 +120,9 @@ export default function CodeEditor() {
                 Online Code Editor
               </h1>
               <p className="text-sm text-muted-foreground">
-                Write and execute Python code in a sandboxed environment
+                Write and execute{" "}
+                <span className="font-medium">{language.toUpperCase()}</span>{" "}
+                code in a sandboxed environment
               </p>
             </div>
             <div className="flex gap-2">
@@ -131,14 +151,32 @@ export default function CodeEditor() {
           {/* Code Editor */}
           <Card className="flex flex-col">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Python Code Editor</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">
+                  {language.toUpperCase()} Code Editor
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">
+                    Language:
+                  </span>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as Language)}
+                    className="border rounded px-2 py-1 text-sm"
+                  >
+                    <option value="python">Python</option>
+                    <option value="r">R</option>
+                  </select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="flex-1 p-0">
               <div className="h-full border rounded-md overflow-hidden">
                 <Editor
                   height="500px"
+                  language={language === "python" ? "python" : "r"}
                   defaultLanguage="python"
-                  defaultValue="print('Hello')"
+                  defaultValue={defaultPy}
                   value={code}
                   onChange={(value) => setCode(value ?? "")}
                   onMount={(
@@ -181,6 +219,31 @@ export default function CodeEditor() {
                         };
                       },
                     });
+
+                    // Minimal R language registration if Monaco doesn't have it
+                    const hasR = (monaco as any).languages
+                      .getLanguages()
+                      .some((l: any) => l.id === "r");
+                    if (!hasR) {
+                      (monaco as any).languages.register({ id: "r" });
+                      (monaco as any).languages.setMonarchTokensProvider("r", {
+                        tokenizer: {
+                          root: [
+                            [/#.*/, "comment"],
+                            [/\"([^\"\\]|\\.)*\"/, "string"],
+                            [/'([^'\\]|\\.)*'/, "string"],
+                            [/\\b(\\d+(\\.\\d+)?)\\b/, "number"],
+                            [
+                              /\\b(function|if|else|for|while|repeat|in|next|break|TRUE|FALSE|NULL|NA|NaN|Inf)\\b/,
+                              "keyword",
+                            ],
+                            [/[a-zA-Z_][\\w.]*/, "identifier"],
+                            [/[-+*/=<>!]+/, "operator"],
+                            [/[[\\](){}]/, "@brackets"],
+                          ],
+                        },
+                      });
+                    }
                   }}
                   theme="vs-dark"
                   options={{
@@ -262,7 +325,10 @@ export default function CodeEditor() {
           </CardHeader>
           <CardContent>
             <div className="text-sm text-muted-foreground">
-              <p>Backend API: http://localhost:8001/execute</p>
+              <p>
+                Backend API: http://localhost:8001/execute (sends{" "}
+                {"{ code, language }"})
+              </p>
               <p>Frontend: http://localhost:8000</p>
               <p className="mt-2">
                 If you see network errors, ensure both servers are running:

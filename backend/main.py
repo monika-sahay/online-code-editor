@@ -39,6 +39,7 @@ app.add_middleware(
 
 class CodeRequest(BaseModel):
     code: str
+    language: str = "python"   # "python" | "r"
 
 class CodeResponse(BaseModel):
     output: str
@@ -52,7 +53,7 @@ async def root():
 @app.post("/execute", response_model=CodeResponse)
 async def execute_code(request: CodeRequest):
     """
-    Execute Python code in a Docker container for sandboxing (with fallback to direct execution)
+    Execute Python or R code (with timeout and temp sandbox dir)
     """
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code cannot be empty")
@@ -62,51 +63,38 @@ async def execute_code(request: CodeRequest):
     try:
         # Create temporary directory
         temp_dir = tempfile.mkdtemp()
-        script_path = os.path.join(temp_dir, "script.py")
-        
+        lang = (request.language or "python").lower().strip()
+        if lang not in ("python", "r"):
+            raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
+
+        # Map language to file extension and command
+        conf = {
+            "python": {"ext": "py", "cmd": lambda p: ["python3", p]},
+            "r":      {"ext": "R",  "cmd": lambda p: ["Rscript", "--vanilla", p]},
+        }
+
+        script_path = os.path.join(temp_dir, f"script.{conf[lang]['ext']}")
+
         # Write code to temporary file
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(request.code)
-        
-        logger.info(f"Executing code in temporary file: {script_path}")
-        
-        # Use direct Python execution (Docker not available in this environment)
-        try:
-            result = subprocess.run(
-                ["python3", script_path],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=temp_dir
-            )
-            
-            if result.returncode == 0:
-                return CodeResponse(
-                    output=result.stdout,
-                    error=result.stderr,
-                    success=True
-                )
-            else:
-                return CodeResponse(
-                    output=result.stdout,
-                    error=result.stderr,
-                    success=False
-                )
-                
-        except subprocess.TimeoutExpired:
-            logger.error("Code execution timed out")
-            return CodeResponse(
-                output="",
-                error="Code execution timed out (30 seconds limit)",
-                success=False
-            )
-        except FileNotFoundError:
-            logger.error("Python3 not found")
-            return CodeResponse(
-                output="",
-                error="Python3 not found. Please ensure Python is installed.",
-                success=False
-            )
+
+        logger.info(f"Executing {lang} code in temporary file: {script_path}")
+
+        # Execute with timeout
+        result = subprocess.run(
+            conf[lang]["cmd"](script_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=temp_dir,
+        )
+
+        if result.returncode == 0:
+            return CodeResponse(output=result.stdout, error=result.stderr, success=True)
+        else:
+            return CodeResponse(output=result.stdout, error=result.stderr, success=False)
+ 
             
     except subprocess.TimeoutExpired:
         logger.error("Code execution timed out")
@@ -115,6 +103,10 @@ async def execute_code(request: CodeRequest):
             error="Code execution timed out (30 seconds limit)",
             success=False
         )
+    except FileNotFoundError as e:
+        # e.g., Rscript or python3 missing
+        logger.error(f"Runtime not found: {e}")
+        return CodeResponse(output="", error=f"Runtime not found: {e}", success=False)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         return CodeResponse(

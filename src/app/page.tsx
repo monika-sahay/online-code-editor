@@ -221,12 +221,16 @@ export default function CodeEditor() {
                     });
 
                     // Minimal R language registration if Monaco doesn't have it
-                    const hasR = (monaco as any).languages
+                    const hasR = monaco.languages
                       .getLanguages()
-                      .some((l: any) => l.id === "r");
+                      .some(
+                        (l: MonacoType.languages.ILanguageExtensionPoint) =>
+                          l.id === "r"
+                      );
                     if (!hasR) {
-                      (monaco as any).languages.register({ id: "r" });
-                      (monaco as any).languages.setMonarchTokensProvider("r", {
+                      monaco.languages.register({ id: "r" });
+
+                      const rLanguage: MonacoType.languages.IMonarchLanguage = {
                         tokenizer: {
                           root: [
                             [/#.*/, "comment"],
@@ -237,12 +241,14 @@ export default function CodeEditor() {
                               /\\b(function|if|else|for|while|repeat|in|next|break|TRUE|FALSE|NULL|NA|NaN|Inf)\\b/,
                               "keyword",
                             ],
-                            [/[a-zA-Z_][\\w.]*/, "identifier"],
+                            // put '-' first to avoid char class range issues
                             [/[-+*/=<>!]+/, "operator"],
+                            [/[a-zA-Z_][\\w.]*/, "identifier"],
                             [/[[\\](){}]/, "@brackets"],
                           ],
                         },
-                      });
+                      };
+                      monaco.languages.setMonarchTokensProvider("r", rLanguage);
                     }
                   }}
                   theme="vs-dark"

@@ -27,21 +27,24 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Install Julia from official tarball (Debian trixie has no 'julia' pkg) ----
-# Choose a stable Julia version; update as needed.
 ARG JULIA_VERSION=1.10.5
+
+# Switch to bash for RUN instructions below
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) julia_arch="x86_64";; \
-      arm64) julia_arch="aarch64";; \
-      *) echo "Unsupported arch: $arch" && exit 1;; \
+      amd64) julia_dir="x64";  julia_file_arch="x86_64" ;; \
+      arm64) julia_dir="aarch64"; julia_file_arch="aarch64" ;; \
+      *) echo "Unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://julialang-s3.julialang.org/bin/linux/${julia_arch:0:1}${julia_arch}/$JULIA_VERSION/julia-$JULIA_VERSION-linux-$julia_arch.tar.gz" -o /tmp/julia.tgz; \
+    vshort="${JULIA_VERSION%.*}"; \
+    curl -fsSL "https://julialang-s3.julialang.org/bin/linux/${julia_dir}/${vshort}/julia-${JULIA_VERSION}-linux-${julia_file_arch}.tar.gz" -o /tmp/julia.tgz; \
     mkdir -p /opt; \
     tar -xzf /tmp/julia.tgz -C /opt; \
-    ln -s "/opt/julia-$JULIA_VERSION/bin/julia" /usr/local/bin/julia; \
+    ln -s "/opt/julia-${JULIA_VERSION}/bin/julia" /usr/local/bin/julia; \
     rm -f /tmp/julia.tgz
-
 # (Optional) Preinstall useful R/Python packages to speed first-run
 # RUN R -q -e 'install.packages(c("ggplot2","dplyr"), repos="https://cloud.r-project.org")'
 

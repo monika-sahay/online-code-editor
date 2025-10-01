@@ -1,26 +1,42 @@
-FROM python:3.9-slim
+# backend/Dockerfile
+FROM python:3.11-slim
 
-# Set working directory
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Install system dependencies (add r-base)
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    r-base \
+# Runtimes + tools:
+# - r-base (R)
+# - nodejs npm (JS)
+# - golang (Go)
+# - julia (Julia)
+# - openjdk-17-jdk (Java compile+run)
+# - g++ make bash (C/C++ compile)
+# - util-linux (prlimit)
+# - ca-certificates curl gnupg (utils)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      r-base \
+      nodejs npm \
+      golang \
+      julia \
+      openjdk-17-jdk \
+      g++ make bash \
+      util-linux \
+      ca-certificates curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# App
 COPY main.py .
 
-# Expose port
+# Non-root
+RUN useradd -ms /bin/bash appuser
+USER appuser
+
 EXPOSE 8000
-
-# Run the application
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
-
-# (Optional) Preinstall useful R packages
-# RUN R -q -e 'install.packages(c("ggplot2","dplyr"), repos="https://cloud.r-project.org")'
-
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

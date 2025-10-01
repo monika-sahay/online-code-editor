@@ -13,13 +13,25 @@ interface Props {
   setCode: (code: string) => void;
 }
 
+// Map our language keys -> Monaco language IDs
+const monacoIdByLang: Record<Language, string> = {
+  python: "python",
+  r: "r",
+  javascript: "javascript",
+  bash: "shell", // Monaco uses "shell" for bash/sh
+  cpp: "cpp",
+  java: "java",
+  go: "go",
+  julia: "julia",
+};
+
 export default function CodePane({ language, code, setCode }: Props) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 
   return (
     <Editor
       height="500px"
-      language={language === "python" ? "python" : "r"}
+      language={monacoIdByLang[language]}
       value={code}
       onChange={(val) => setCode(val ?? "")}
       onMount={(editor, monaco) => {

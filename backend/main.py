@@ -50,40 +50,47 @@ class CodeResponse(BaseModel):
 async def root():
     return {"message": "Code Execution API is running"}
 
+
 @app.post("/execute", response_model=CodeResponse)
 async def execute_code(request: CodeRequest):
     """
-    Execute Python or R code (with timeout and temp sandbox dir)
+    Execute code in a temp sandbox dir. Supports: python, r, javascript, bash, go, julia, cpp, java
     """
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code cannot be empty")
-    
-    # Create a temporary file to store the code
+
     temp_dir = None
     try:
-        # Create temporary directory
         temp_dir = tempfile.mkdtemp()
+
         lang = (request.language or "python").lower().strip()
-        if lang not in ("python", "r"):
+        supported = {"python", "r", "javascript", "bash", "go", "julia", "cpp", "java"}
+        if lang not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
 
-        # Map language to file extension and command
         conf = {
-            "python": {"ext": "py", "cmd": lambda p: ["python3", p]},
-            "r":      {"ext": "R",  "cmd": lambda p: ["Rscript", "--vanilla", p]},
+            "python": {"ext": "py",  "cmd": lambda p, d: ["python3", p]},
+            "r":      {"ext": "R",   "cmd": lambda p, d: ["Rscript", "--vanilla", p]},
+            "javascript": {"ext": "js", "cmd": lambda p, d: ["node", p]},
+            "bash":   {"ext": "sh",  "cmd": lambda p, d: ["bash", p]},
+            "go":     {"ext": "go",  "cmd": lambda p, d: ["bash", "-lc", f"cd {d} && go run {p}"]},
+            "julia":  {"ext": "jl",  "cmd": lambda p, d: ["julia", p]},
+            "cpp":    {"ext": "cpp", "cmd": lambda p, d: ["bash", "-lc", f"g++ -O2 {p} -o {d}/a.out && {d}/a.out"]},
+            "java":   {"ext": "java","cmd": lambda p, d: ["bash", "-lc", f"javac {p} && java -cp {d} Main"]},
         }
 
+        # 1) Create script file path
         script_path = os.path.join(temp_dir, f"script.{conf[lang]['ext']}")
 
-        # Write code to temporary file
+        # 2) Write user code to disk
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(request.code)
 
         logger.info(f"Executing {lang} code in temporary file: {script_path}")
 
-        # Execute with timeout
+        # 3) Run it (all lambdas take (path, temp_dir))
         result = subprocess.run(
-            conf[lang]["cmd"](script_path),
+            conf[lang]["cmd"](script_path, temp_dir),
             capture_output=True,
             text=True,
             timeout=30,
@@ -94,28 +101,17 @@ async def execute_code(request: CodeRequest):
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)
         else:
             return CodeResponse(output=result.stdout, error=result.stderr, success=False)
- 
-            
+
     except subprocess.TimeoutExpired:
         logger.error("Code execution timed out")
-        return CodeResponse(
-            output="",
-            error="Code execution timed out (30 seconds limit)",
-            success=False
-        )
+        return CodeResponse(output="", error="Code execution timed out (30 seconds limit)", success=False)
     except FileNotFoundError as e:
-        # e.g., Rscript or python3 missing
         logger.error(f"Runtime not found: {e}")
         return CodeResponse(output="", error=f"Runtime not found: {e}", success=False)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return CodeResponse(
-            output="",
-            error=f"Unexpected error: {str(e)}",
-            success=False
-        )
+        logger.exception("Unexpected error")
+        return CodeResponse(output="", error=f"Unexpected error: {str(e)}", success=False)
     finally:
-        # Clean up temporary files
         if temp_dir and os.path.exists(temp_dir):
             try:
                 import shutil
@@ -123,6 +119,7 @@ async def execute_code(request: CodeRequest):
                 logger.info(f"Cleaned up temporary directory: {temp_dir}")
             except Exception as e:
                 logger.error(f"Failed to clean up temporary directory: {e}")
+
 
 @app.post("/ai-complete")
 async def ai_complete(request: Request):

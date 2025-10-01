@@ -6,7 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LanguageSelect from "@/components/editor/LanguageSelect";
 import CodePane from "@/components/editor/CodePane";
 import OutputPane from "@/components/editor/OutputPane";
-import { defaultPy, defaultR } from "@/constants/snippets";
+import {
+  defaultPy,
+  defaultR,
+  defaultBash,
+  defaultCpp,
+  defaultGo,
+  defaultJS,
+  defaultJava,
+  defaultJulia,
+} from "@/constants/snippets";
 import { runCode } from "@/utils/api";
 import type { ExecutionResult, Language } from "@/types/editor";
 
@@ -18,7 +27,18 @@ export default function CodeEditorPage() {
   const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
-    setCode(language === "python" ? defaultPy : defaultR);
+    const map = {
+      python: defaultPy,
+      r: defaultR,
+      javascript: defaultJS,
+      bash: defaultBash,
+      cpp: defaultCpp,
+      java: defaultJava,
+      go: defaultGo,
+      julia: defaultJulia,
+    } as const;
+
+    setCode(map[language] ?? defaultPy);
   }, [language]);
 
   const onRun = async () => {

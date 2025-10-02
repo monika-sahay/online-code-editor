@@ -142,15 +142,23 @@ async def execute_code(request: CodeRequest):
         base_map = {
             "python": ["python3", script_path],
             "r": ["Rscript", "--vanilla", script_path],
-            "javascript": ["node", "--v8-code-range-size=64", script_path],  # keep V8 VM reservation small
+            # Node with tighter memory, no JIT (matches NODE_OPTIONS too)
+            "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
             "bash": ["bash", script_path],
-            "go": ["bash", "-lc", f"cd {shlex.quote(temp_dir)} && GOFLAGS='' go run {shlex.quote(script_path)}"],
-            "julia": ["julia", "--compile=min", "--color=no", script_path],
+            # Build then run for more predictable timing
+            "go": ["bash", "-lc",
+                f"cd {shlex.quote(temp_dir)} && "
+                f"GOFLAGS='-buildvcs=false' GOMAXPROCS=1 go build -o {shlex.quote(out_bin)} {shlex.quote(script_path)} && "
+                f"{shlex.quote(out_bin)}"],
+            # Julia: fast startup flags to avoid heavy precompile
+            "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
             "cpp": ["bash", "-lc",
                     f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+            # Java: expects public class Main in code
             "java": ["bash", "-lc",
-                     f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
+                    f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
         }
+
         cmd = base_map[lang]
 
         # 3) Best-effort limits

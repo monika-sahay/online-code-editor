@@ -103,86 +103,85 @@ async def execute_code(request: CodeRequest):
     Supports: python, r, javascript, bash, go, julia, cpp, java.
     Uses subprocess with wall-clock timeout and (when available) prlimit caps.
     """
-    code = (request.code or "").rstrip()
-    if not code:
+    if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code cannot be empty")
 
     temp_dir = None
     try:
-        # 0) Prepare workspace
         temp_dir = tempfile.mkdtemp()
         lang = (request.language or "python").lower().strip()
         supported = {"python", "r", "javascript", "bash", "go", "julia", "cpp", "java"}
         if lang not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
 
-        # 1) Determine file name & write user code
-        # Java must be Main.java when public class Main is used
+        # 1) Determine file name and write user code
+        #    For Java the filename must match the public class.
+        ext_map = {
+            "python": "py",
+            "r": "R",
+            "javascript": "js",
+            "bash": "sh",
+            "go": "go",
+            "julia": "jl",
+            "cpp": "cpp",
+            "java": "java",
+        }
+        filename = f"script.{ext_map[lang]}"
         if lang == "java":
-            script_path = os.path.join(temp_dir, "Main.java")
-        else:
-            ext_map = {
-                "python": "py",
-                "r": "R",
-                "javascript": "js",
-                "bash": "sh",
-                "go": "go",
-                "julia": "jl",
-                "cpp": "cpp",
-                "java": "java",  # unused when lang == java due to special case above
-            }
-            script_path = os.path.join(temp_dir, f"script.{ext_map[lang]}")
-
+            filename = "Main.java"
+        script_path = os.path.join(temp_dir, filename)
         with open(script_path, "w", encoding="utf-8") as f:
-            f.write(code)
+            f.write(request.code)
 
         logger.info(f"Executing {lang} code in temporary file: {script_path}")
 
-        # 2) Build base command (Render-safe, no nested containers)
-        prlimit = which("prlimit")  # available if util-linux is installed in the image
-        out_bin = os.path.join(temp_dir, "a.out")  # for C++ compiled binary
+        prlimit = which("prlimit")
+        out_bin = os.path.join(temp_dir, "a.out")
 
+        # 2) Base command per language
         base_map = {
             "python": ["python3", script_path],
             "r": ["Rscript", "--vanilla", script_path],
-            "javascript": ["node", script_path],
+            "javascript": ["node", "--v8-code-range-size=64", script_path],  # keep V8 VM reservation small
             "bash": ["bash", script_path],
-            "go": ["bash", "-lc", f"cd {shlex.quote(temp_dir)} && go run {shlex.quote(script_path)}"],
-            "julia": ["julia", script_path],
+            "go": ["bash", "-lc", f"cd {shlex.quote(temp_dir)} && GOFLAGS='' go run {shlex.quote(script_path)}"],
+            "julia": ["julia", "--compile=min", "--color=no", script_path],
             "cpp": ["bash", "-lc",
                     f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
-            # NOTE: user code must declare `public class Main` for Java.
             "java": ["bash", "-lc",
                      f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
         }
         cmd = base_map[lang]
 
-        # 2a) Windows local dev guard for "bash" language (no WSL)
-        if os.name == "nt" and lang == "bash":
-            return CodeResponse(
-                output="",
-                error="Bash execution on Windows requires WSL. Run in Docker/WSL or choose another language.",
-                success=False,
-            )
+        # 3) Best-effort limits
+        #    - Do NOT wrap node with prlimit --as=256MB (V8 needs big address space)
+        #    - Give Julia/Go a little more time (& allow address space)
+        cap_with_prlimit = prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go"}
+        if cap_with_prlimit:
+            cmd = ["prlimit", "--as=268435456", "--cpu=10", "--nproc=256", "--"] + cmd
 
-        # 3) Apply best-effort caps for non-bash top-level commands
-        # IMPORTANT: do NOT cap nproc; Node/R need threads/forks. Keep mem + CPU only.
-        if prlimit and cmd[0] != "bash":
-            cmd = ["prlimit", "--as=268435456", "--cpu=10", "--"] + cmd
-            # --as   ≈ 256 MB address space
-            # --cpu  10 seconds CPU
+        # Language-specific env (optional but useful)
+        env = os.environ.copy()
+        if lang == "javascript":
+            # keep heap modest; the big win is the v8 code-range flag above
+            env["NODE_OPTIONS"] = env.get("NODE_OPTIONS", "") + " --max-old-space-size=64"
+        if lang == "julia":
+            env.setdefault("JULIA_NUM_THREADS", "1")
 
-        # 4) Execute with wall-clock timeout (longer for compiled langs on cold start)
-        timeout_sec = 60 if lang in {"go", "cpp", "java"} else 30
+        # 4) Execute with wall-clock timeout
+        timeout = 30
+        if lang in {"go", "julia", "java", "cpp"}:
+            timeout = 60  # allow compile / first-run costs
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=timeout_sec,
+            timeout=timeout,
             cwd=temp_dir,
+            env=env,
         )
 
-        # 5) Return
         if result.returncode == 0:
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)
         else:
@@ -190,9 +189,8 @@ async def execute_code(request: CodeRequest):
 
     except subprocess.TimeoutExpired:
         logger.error("Code execution timed out")
-        return CodeResponse(output="", error="Code execution timed out", success=False)
+        return CodeResponse(output="", error=f"Code execution timed out", success=False)
     except FileNotFoundError as e:
-        # e.g., 'Rscript', 'node', 'julia', 'g++', 'javac' not installed
         logger.error(f"Runtime not found: {e}")
         return CodeResponse(output="", error=f"Runtime not found: {e}", success=False)
     except Exception as e:

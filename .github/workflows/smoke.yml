@@ -1,0 +1,48 @@
+name: smoke
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # optional caching (speeds up Docker builds on CI)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (from backend/)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          tags: code-api:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run server
+        run: |
+          docker run -d --rm -p 8000:8000 --name codeapi code-api:ci
+          # wait for the API to boot
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:8000/ && break
+            sleep 1
+          done
+
+      - name: Run smoke tests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          python smoke.py
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs codeapi || true
+
+      - name: Stop container
+        if: always()
+        run: docker stop codeapi || true

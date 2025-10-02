@@ -137,6 +137,10 @@ async def execute_code(request: CodeRequest):
 
         prlimit = which("prlimit")
         out_bin = os.path.join(temp_dir, "a.out")
+        gocache = os.path.join(temp_dir, ".gocache")
+        gobuild = os.path.join(temp_dir, "build")
+        os.makedirs(gocache, exist_ok=True)
+        os.makedirs(gobuild, exist_ok=True)
 
         # 2) Base command per language
         base_map = {
@@ -146,10 +150,15 @@ async def execute_code(request: CodeRequest):
             "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
             "bash": ["bash", script_path],
             # Build then run for more predictable timing
-            "go": ["bash", "-lc",
-                f"cd {shlex.quote(temp_dir)} && "
-                f"GOFLAGS='-buildvcs=false' GOMAXPROCS=1 go build -o {shlex.quote(out_bin)} {shlex.quote(script_path)} && "
-                f"{shlex.quote(out_bin)}"],
+            "go": [
+                "bash", "-lc",
+                "set -euo pipefail;"
+                f"export GOCACHE={shlex.quote(gocache)};"
+                f"export GOMODCACHE={shlex.quote(os.path.join(temp_dir, '.gomodcache'))};"
+                "export GOTOOLCHAIN=local;"        # avoid go toolchain downloads
+                f"cd {shlex.quote(temp_dir)};"
+                f"go run {shlex.quote(script_path)}"
+            ],
             # Julia: fast startup flags to avoid heavy precompile
             "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
             "cpp": ["bash", "-lc",
@@ -164,8 +173,8 @@ async def execute_code(request: CodeRequest):
         # 3) Best-effort limits
         #    - Do NOT wrap node with prlimit --as=256MB (V8 needs big address space)
         #    - Give Julia/Go a little more time (& allow address space)
-        cap_with_prlimit = prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go"}
-        if cap_with_prlimit:
+        # cap_with_prlimit = prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go"}
+        if prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go", "r"}:
             cmd = ["prlimit", "--as=268435456", "--cpu=10", "--nproc=256", "--"] + cmd
 
         # Language-specific env (optional but useful)

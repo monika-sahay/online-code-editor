@@ -218,15 +218,11 @@ async def execute_code(request: CodeRequest):
         # Language-specific env (optional but useful)
         env = os.environ.copy()
         if lang == "javascript":
-            # Build a safe NODE_OPTIONS set
-            wanted = ["--max-old-space-size=64", "--jitless"]
-            existing = shlex.split(env.get("NODE_OPTIONS", ""))
-
-            # Drop --expose_wasm if it’s present
-            existing = [f for f in existing if f != "--expose_wasm"]
-
-            # Merge
-            env["NODE_OPTIONS"] = " ".join(wanted + existing)
+            secure_mode = os.getenv("SECURE_JS", "0") == "1"
+            if secure_mode:
+                cmd = ["node", "--jitless", "--stack_size=512", script_path]
+            else:
+                cmd = ["node", "--stack_size=512", "--max-old-space-size=64", script_path]
         if lang == "julia":
             env.setdefault("JULIA_NUM_THREADS", "1")
 
@@ -243,6 +239,7 @@ async def execute_code(request: CodeRequest):
             cwd=temp_dir,
             env=env,
         )
+        # stderr = result.stderr.replace("Warning: disabling flag --expose_wasm due to conflicting flags", "")
 
         # If we compiled only (Windows cpp/java), run the artifact now
         if IS_WINDOWS and lang == "cpp":

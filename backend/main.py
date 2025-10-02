@@ -142,33 +142,71 @@ async def execute_code(request: CodeRequest):
         os.makedirs(gocache, exist_ok=True)
         os.makedirs(gobuild, exist_ok=True)
 
+        # Normalize paths for shells/runtimes
+        posix_temp = to_bash_path(temp_dir) if IS_WINDOWS else temp_dir
+        posix_script = to_bash_path(script_path) if IS_WINDOWS else script_path
+
+        # Build base command per language (Windows vs Linux)
+        if IS_WINDOWS:
+            base_map = {
+                "python": ["python", script_path],
+                "r": ["Rscript", "--vanilla", script_path],
+                "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
+                "bash": ["bash", posix_script],                 # pass POSIX path to Git Bash
+                "go": ["go", "run", script_path],               # no bash -lc on Windows
+                "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
+                "cpp": ["g++", "-O2", script_path, "-o", out_bin],  # compile now; we'll run after
+                "java": ["javac", script_path],                 # compile now; we'll run after
+            }
+        else:
+            base_map = {
+                "python": ["python3", script_path],
+                "r": ["Rscript", "--vanilla", script_path],
+                "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
+                "bash": ["bash", script_path],
+                "go": ["bash", "-lc", f"set -euo pipefail; cd {shlex.quote(temp_dir)}; go run {shlex.quote(script_path)}"],
+                "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
+                "cpp": ["bash", "-lc", f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+                "java": ["bash", "-lc", f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
+            }
+
         # 2) Base command per language
-        base_map = {
-            "python": ["python3", script_path],
-            "r": ["Rscript", "--vanilla", script_path],
-            # Node with tighter memory, no JIT (matches NODE_OPTIONS too)
-            "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
-            "bash": ["bash", script_path],
-            # Build then run for more predictable timing
-            "go": [
-                "bash", "-lc",
-                "set -euo pipefail;"
-                f"export GOCACHE={shlex.quote(gocache)};"
-                f"export GOMODCACHE={shlex.quote(os.path.join(temp_dir, '.gomodcache'))};"
-                "export GOTOOLCHAIN=local;"        # avoid go toolchain downloads
-                f"cd {shlex.quote(temp_dir)};"
-                f"go run {shlex.quote(script_path)}"
-            ],
-            # Julia: fast startup flags to avoid heavy precompile
-            "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
-            "cpp": ["bash", "-lc",
-                    f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
-            # Java: expects public class Main in code
-            "java": ["bash", "-lc",
-                    f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
-        }
+        # base_map = {
+        #     "python": ["python3", script_path],
+        #     "r": ["Rscript", "--vanilla", script_path],
+        #     # Node with tighter memory, no JIT (matches NODE_OPTIONS too)
+        #     "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
+        #     "bash": ["bash", script_path],
+        #     # Build then run for more predictable timing
+        #     "go": [
+        #         "bash", "-lc",
+        #         "set -euo pipefail;"
+        #         f"export GOCACHE={shlex.quote(gocache)};"
+        #         f"export GOMODCACHE={shlex.quote(os.path.join(temp_dir, '.gomodcache'))};"
+        #         "export GOTOOLCHAIN=local;"        # avoid go toolchain downloads
+        #         f"cd {shlex.quote(temp_dir)};"
+        #         f"go run {shlex.quote(script_path)}"
+        #     ],
+        #     # Julia: fast startup flags to avoid heavy precompile
+        #     "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
+        #     "cpp": ["bash", "-lc",
+        #             f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+        #     # Java: expects public class Main in code
+        #     "java": ["bash", "-lc",
+        #             f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
+        # }
 
         cmd = base_map[lang]
+
+        # --- runtime existence check ---
+        if lang == "julia" and which("julia") is None:
+            return CodeResponse(output="", error="Julia runtime not installed on server", success=False)
+        if lang == "r" and which("Rscript") is None:
+            return CodeResponse(output="", error="Rscript runtime not installed on server", success=False)
+        if lang == "javascript" and which("node") is None:
+            return CodeResponse(output="", error="Node.js runtime not installed on server", success=False)
+        # (you can add similar checks for go, java, g++, etc.)
+
 
         # 3) Best-effort limits
         #    - Do NOT wrap node with prlimit --as=256MB (V8 needs big address space)
@@ -202,6 +240,21 @@ async def execute_code(request: CodeRequest):
             env=env,
         )
         # stderr = result.stderr.replace("Warning: disabling flag --expose_wasm due to conflicting flags", "")
+
+        # If we compiled only (Windows cpp/java), run the artifact now
+        if IS_WINDOWS and lang == "cpp":
+            if result.returncode != 0:
+                return CodeResponse(output=result.stdout, error=result.stderr, success=False)
+            # run the produced exe
+            run_res = subprocess.run([out_bin], capture_output=True, text=True, timeout=timeout, cwd=temp_dir)
+            return CodeResponse(output=run_res.stdout, error=run_res.stderr, success=(run_res.returncode == 0))
+
+        if IS_WINDOWS and lang == "java":
+            if result.returncode != 0:
+                return CodeResponse(output=result.stdout, error=result.stderr, success=False)
+            run_res = subprocess.run(["java", "-cp", temp_dir, "Main"], capture_output=True, text=True, timeout=timeout, cwd=temp_dir)
+            return CodeResponse(output=run_res.stdout, error=run_res.stderr, success=(run_res.returncode == 0))
+
 
         if result.returncode == 0:
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)

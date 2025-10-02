@@ -229,7 +229,7 @@ async def execute_code(request: CodeRequest):
         # 4) Execute with wall-clock timeout
         timeout = 30
         if lang in {"go", "julia", "java", "cpp"}:
-            timeout = 60  # allow compile / first-run costs
+            timeout = 120  # allow compile / first-run costs
 
         result = subprocess.run(
             cmd,

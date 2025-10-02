@@ -1,6 +1,9 @@
 # Multi-runtime FastAPI runner (Render-friendly, no nested containers)
 FROM python:3.11-slim
 
+# Use bash so parameter expansion like ${var%.*} works inside RUN
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -11,10 +14,11 @@ WORKDIR /app
 # - r-base: R + Rscript
 # - nodejs npm: JavaScript runtime
 # - golang: Go toolchain
-# - default-jdk: will install OpenJDK (21 on trixie)
+# - default-jdk: OpenJDK (21 on trixie)
 # - g++ make bash: compilers & shell
 # - util-linux: provides 'prlimit' to cap CPU/memory per process
 # - ca-certificates curl gnupg xz-utils: basics + for Julia install
+# - elfutils: provides eu-execstack to clear execstack bit (fixes Julia issue)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       r-base \
@@ -23,15 +27,11 @@ RUN apt-get update && \
       default-jdk \
       g++ make bash \
       util-linux \
-      ca-certificates curl gnupg xz-utils \
+      ca-certificates curl gnupg xz-utils elfutils \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Install Julia from official tarball (Debian trixie has no 'julia' pkg) ----
 ARG JULIA_VERSION=1.10.5
-
-# Switch to bash for RUN instructions below
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
@@ -44,7 +44,12 @@ RUN set -eux; \
     mkdir -p /opt; \
     tar -xzf /tmp/julia.tgz -C /opt; \
     ln -s "/opt/julia-${JULIA_VERSION}/bin/julia" /usr/local/bin/julia; \
+    # Clear execstack bit on libopenlibm if set (fixes: "cannot enable executable stack")
+    if command -v eu-execstack >/dev/null 2>&1; then \
+      eu-execstack -c "/opt/julia-${JULIA_VERSION}/lib/julia/libopenlibm.so" || true; \
+    fi; \
     rm -f /tmp/julia.tgz
+
 # (Optional) Preinstall useful R/Python packages to speed first-run
 # RUN R -q -e 'install.packages(c("ggplot2","dplyr"), repos="https://cloud.r-project.org")'
 
@@ -59,6 +64,6 @@ COPY main.py .
 RUN useradd -ms /bin/bash appuser
 USER appuser
 
-# Render will inject $PORT. Default 8000 for local runs.
+# Render will inject $PORT. Default to 8000 for local runs.
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

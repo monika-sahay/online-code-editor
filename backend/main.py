@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import subprocess
@@ -6,31 +6,35 @@ import tempfile
 import os
 import json
 import logging
-from fastapi import Request
-import os
-import openai
+import sys
+import time
 from shutil import which
 import shlex
+import platform
+import openai
 
+# --- OpenAI key (for /ai-complete) ---
 openai.api_key = os.environ.get("OPENAI_API_KEY")
-# Configure logging
+
+# --- Logging ---
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main")
 
 app = FastAPI(title="Code Execution API", version="1.0.0")
+
 origins = [
-    "https://online-code-editor-nine-chi.vercel.app", 
-    "https://*.vercel.app",                             # optional wildcard
-    "https://*.onrender.com", 
+    "https://online-code-editor-nine-chi.vercel.app",
+    "https://*.vercel.app",
+    "https://*.onrender.com",
     "https://freeonlineeditor.co.uk",
-    "https://www.freeonlineeditor.co.uk",                          # allow Render backend
-    "http://localhost:8000",                            # local frontend
-    "http://localhost:3000",                            # local frontend alt
+    "https://www.freeonlineeditor.co.uk",
+    "http://localhost:8000",
+    "http://localhost:3000",
     "http://127.0.0.1:8000",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
 ]
 
-# Add CORS middleware - allow all origins including Vercel
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -39,60 +43,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Models ---
 class CodeRequest(BaseModel):
     code: str
-    language: str = "python"   # "python" | "r"
+    language: str = "python"  # "python" | "r" | "javascript" | ...
 
 class CodeResponse(BaseModel):
     output: str
     error: str = ""
     success: bool = True
 
+
+# --- OS helpers ---
+IS_WINDOWS = (os.name == "nt")
+
+def to_bash_path(p: str) -> str:
+    """
+    Convert a Windows path to POSIX style for Git Bash.
+    Uses cygpath if available, else best-effort.
+    """
+    cp = which("cygpath")
+    if cp:
+        try:
+            out = subprocess.run([cp, "-u", p], capture_output=True, text=True, check=True)
+            return out.stdout.strip()
+        except Exception:
+            pass
+    # fallback
+    p2 = p.replace("\\", "/")
+    if len(p2) >= 2 and p2[1] == ":":
+        drive = p2[0].lower()
+        p2 = f"/{drive}{p2[2:]}"
+    return p2
+
+def cleanup_dir(path: str, logger):
+    """Try remove temp dir with retries (Windows can hold locks briefly)."""
+    import shutil
+    for i in range(6):
+        try:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            return
+        except Exception:
+            time.sleep(0.25 * (i + 1))
+    logger.error(f"Failed to clean up temporary directory after retries: {path}")
+
+
+# --- Routes ---
 @app.get("/")
 async def root():
     return {"message": "Code Execution API is running"}
 
 
+# --- Execute code ---
 @app.post("/execute", response_model=CodeResponse)
 async def execute_code(request: CodeRequest):
-    """
-    Execute code in a temp sandbox dir.
-    Supports: python, r, javascript, bash, go, julia, cpp, java
-    Uses subprocess with timeout and (when available) prlimit caps.
-    """
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code cannot be empty")
 
     temp_dir = None
     try:
-        # 0) Prepare workspace
         temp_dir = tempfile.mkdtemp()
-
         lang = (request.language or "python").lower().strip()
         supported = {"python", "r", "javascript", "bash", "go", "julia", "cpp", "java"}
         if lang not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
 
-        # 1) Determine file name & write user code
-        ext_map = {
-            "python": "py",
-            "r": "R",
-            "javascript": "js",
-            "bash": "sh",
-            "go": "go",
-            "julia": "jl",
-            "cpp": "cpp",
-            "java": "java",
-        }
-        script_path = os.path.join(temp_dir, f"script.{ext_map[lang]}")
+        # --- filenames ---
+        ext_map = {"python":"py","r":"R","javascript":"js","bash":"sh","go":"go","julia":"jl","cpp":"cpp","java":"java"}
+        if lang == "java":
+            script_path = os.path.join(temp_dir, "Main.java")  # must match public class Main
+        else:
+            script_path = os.path.join(temp_dir, f"script.{ext_map[lang]}")
+
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(request.code)
 
         logger.info(f"Executing {lang} code in temporary file: {script_path}")
 
-        # 2) Build base command (Render-safe, no nested containers)
-        prlimit = which("prlimit")  # available if util-linux is installed in the image
-        out_bin = os.path.join(temp_dir, "a.out")  # for C++ compiled binary
+        # --- commands ---
+        prlimit = which("prlimit")
+        out_bin = os.path.join(temp_dir, "a.out")
 
         base_map = {
             "python": ["python3", script_path],
@@ -101,32 +132,32 @@ async def execute_code(request: CodeRequest):
             "bash": ["bash", script_path],
             "go": ["bash", "-lc", f"cd {shlex.quote(temp_dir)} && go run {shlex.quote(script_path)}"],
             "julia": ["julia", script_path],
-            "cpp": ["bash", "-lc",
-                    f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
-            # NOTE: user code must declare `public class Main` for Java.
-            "java": ["bash", "-lc",
-                     f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
+            "cpp": ["bash", "-lc", f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+            "java": ["bash", "-lc", f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
         }
         cmd = base_map[lang]
 
-        # 3) Apply best-effort caps for non-bash top-level commands
-        # (bash -lc already wraps a mini shell pipeline, so prlimit before bash would not apply to the children)
-        if prlimit and cmd[0] != "bash":
-            cmd = ["prlimit", "--as=268435456", "--cpu=10", "--nproc=256", "--"] + cmd
-            # --as   ≈ 256 MB address space cap
-            # --cpu  10 seconds CPU time
-            # --nproc limit number of processes to curb forks
+        # --- env tweaks for Node ---
+        run_env = None
+        if lang == "javascript":
+            run_env = os.environ.copy()
+            run_env["UV_THREADPOOL_SIZE"] = "2"
+            run_env["NODE_OPTIONS"] = "--max-old-space-size=256"
 
-        # 4) Execute with wall-clock timeout
+        # --- best-effort caps ---
+        # skip for javascript and r; keep for others (slightly higher memory)
+        if prlimit and cmd[0] != "bash" and lang not in {"javascript", "r"}:
+            cmd = ["prlimit", "--as=536870912", "--cpu=10", "--nproc=512", "--"] + cmd
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,      # wall-clock timeout
+            timeout=30,
             cwd=temp_dir,
+            env=run_env,
         )
 
-        # 5) Return
         if result.returncode == 0:
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)
         else:
@@ -136,7 +167,6 @@ async def execute_code(request: CodeRequest):
         logger.error("Code execution timed out")
         return CodeResponse(output="", error="Code execution timed out (30 seconds limit)", success=False)
     except FileNotFoundError as e:
-        # e.g., 'Rscript', 'node', 'julia', 'g++', 'javac' not installed
         logger.error(f"Runtime not found: {e}")
         return CodeResponse(output="", error=f"Runtime not found: {e}", success=False)
     except Exception as e:
@@ -153,11 +183,9 @@ async def execute_code(request: CodeRequest):
 
 
 
+# --- AI completion ---
 @app.post("/ai-complete")
 async def ai_complete(request: Request):
-    """
-    Given the code and (optional) cursor position, return an AI suggestion/completion.
-    """
     data = await request.json()
     code = data.get("code", "")
     cursor_offset = data.get("cursorOffset")  # Optional: can use for context
@@ -165,16 +193,14 @@ async def ai_complete(request: Request):
     if not code.strip():
         return {"suggestion": ""}
 
-    # Build a prompt for the AI model
     prompt = (
         "You are a coding assistant. Suggest the next line or completion for the following code:\n"
         f"{code}\n# Suggest code completion below:\n"
     )
 
-    # Call OpenAI ChatCompletion API
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     response = client.chat.completions.create(
-        model="gpt-4o-mini",   # or "gpt-3.5-turbo-instruct-0914"
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "You are a helpful coding assistant."},
             {"role": "user", "content": prompt}
@@ -183,10 +209,9 @@ async def ai_complete(request: Request):
         temperature=0.2
     )
     suggestion = response.choices[0].message.content.strip()
-
     return {"suggestion": suggestion}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

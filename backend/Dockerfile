@@ -6,7 +6,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    NODE_OPTIONS="--jitless --stack_size=512 --max-old-space-size=64" \
+    NODE_OPTIONS="--max-old-space-size=64" \
     JULIA_NUM_THREADS=1
 
 WORKDIR /app

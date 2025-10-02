@@ -180,8 +180,11 @@ async def execute_code(request: CodeRequest):
         # Language-specific env (optional but useful)
         env = os.environ.copy()
         if lang == "javascript":
-            # keep heap modest; the big win is the v8 code-range flag above
-            env["NODE_OPTIONS"] = env.get("NODE_OPTIONS", "") + " --max-old-space-size=64"
+            secure_mode = os.getenv("SECURE_JS", "0") == "1"
+            if secure_mode:
+                cmd = ["node", "--jitless", "--stack_size=512", script_path]
+            else:
+                cmd = ["node", "--stack_size=512", "--max-old-space-size=64", script_path]
         if lang == "julia":
             env.setdefault("JULIA_NUM_THREADS", "1")
 
@@ -198,6 +201,7 @@ async def execute_code(request: CodeRequest):
             cwd=temp_dir,
             env=env,
         )
+        # stderr = result.stderr.replace("Warning: disabling flag --expose_wasm due to conflicting flags", "")
 
         if result.returncode == 0:
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)

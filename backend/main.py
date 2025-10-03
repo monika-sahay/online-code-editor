@@ -110,7 +110,7 @@ async def execute_code(request: CodeRequest):
     try:
         temp_dir = tempfile.mkdtemp()
         lang = (request.language or "python").lower().strip()
-        supported = {"python", "r", "javascript", "bash", "go", "julia", "cpp", "java"}
+        supported = {"python", "r", "javascript", "bash", "go", "julia", "cpp", "java", "c", "csharp"}
         if lang not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
 
@@ -125,6 +125,8 @@ async def execute_code(request: CodeRequest):
             "julia": "jl",
             "cpp": "cpp",
             "java": "java",
+            "c": "c",
+            "csharp": "cs",
         }
         filename = f"script.{ext_map[lang]}"
         if lang == "java":
@@ -141,6 +143,8 @@ async def execute_code(request: CodeRequest):
         gobuild = os.path.join(temp_dir, "build")
         os.makedirs(gocache, exist_ok=True)
         os.makedirs(gobuild, exist_ok=True)
+        out_bin = os.path.join(temp_dir, "a.out")
+        exe_path = os.path.join(temp_dir, "script.exe")  # for Mono C#
 
         # Normalize paths for shells/runtimes
         posix_temp = to_bash_path(temp_dir) if IS_WINDOWS else temp_dir
@@ -152,11 +156,19 @@ async def execute_code(request: CodeRequest):
                 "python": ["python", script_path],
                 "r": ["Rscript", "--vanilla", script_path],
                 "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
-                "bash": ["bash", posix_script],                 # pass POSIX path to Git Bash
-                "go": ["go", "run", script_path],               # no bash -lc on Windows
+                # Bash (Git Bash / WSL): convert path first with to_bash_path
+                "bash": ["bash", to_bash_path(script_path)],
+                # Go can run directly without bash -lc
+                "go": ["go", "run", script_path],
                 "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
-                "cpp": ["g++", "-O2", script_path, "-o", out_bin],  # compile now; we'll run after
-                "java": ["javac", script_path],                 # compile now; we'll run after
+                # C++: compile -> run
+                "cpp": ["cmd", "/c", f"g++ -O2 {script_path} -o {out_bin} && {out_bin}"],
+                # Java: compile -> run Main
+                "java": ["cmd", "/c", f"javac {script_path} && java -cp {temp_dir} Main"],
+                # C: compile -> run
+                "c": ["cmd", "/c", f"gcc -O2 {script_path} -o {out_bin} && {out_bin}"],
+                # C#: compile -> run via mono (if installed)
+                "csharp": ["cmd", "/c", f"mcs {script_path} -out:{exe_path} && mono {exe_path}"],
             }
         else:
             base_map = {
@@ -168,6 +180,12 @@ async def execute_code(request: CodeRequest):
                 "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
                 "cpp": ["bash", "-lc", f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
                 "java": ["bash", "-lc", f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
+                "c": ["bash", "-lc",
+                    f"gcc -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+
+                # C# via Mono (no network restores, fast)
+                "csharp": ["bash", "-lc",
+                        f"mcs {shlex.quote(script_path)} -out:{shlex.quote(exe_path)} && mono {shlex.quote(exe_path)}"],                
             }
 
         # 2) Base command per language

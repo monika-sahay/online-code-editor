@@ -23,6 +23,8 @@ const monacoIdByLang: Record<Language, string> = {
   java: "java",
   go: "go",
   julia: "julia",
+  c: "c", // <-- added
+  csharp: "csharp", // <-- added
 };
 
 export default function CodePane({ language, code, setCode }: Props) {

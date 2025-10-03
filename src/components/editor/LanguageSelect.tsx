@@ -21,6 +21,8 @@ export default function LanguageSelect({ value, onChange }: Props) {
         <option value="javascript">JavaScript</option>
         <option value="bash">Bash</option>
         <option value="cpp">C++</option>
+        <option value="c">C</option>
+        <option value="csharp">C#</option>
         <option value="java">Java</option>
         <option value="go">Go</option>
         <option value="julia">Julia</option>

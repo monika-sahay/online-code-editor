@@ -66,3 +66,27 @@ x, y = 10, 5
 println("$(x) + $(y) = $(x + y)")
 println("$(x) * $(y) = $(x * y)")
 `;
+
+export const defaultC = `// C example
+#include <stdio.h>
+int main() {
+    int x = 10, y = 5;
+    printf("Hello from C!\\n");
+    printf("%d + %d = %d\\n", x, y, x + y);
+    printf("%d * %d = %d\\n", x, y, x * y);
+    return 0;
+}
+`;
+
+export const defaultCSharp = `// C# example
+using System;
+
+class Program {
+    static void Main() {
+        int x = 10, y = 5;
+        Console.WriteLine("Hello from C#!");
+        Console.WriteLine($"{x} + {y} = {x + y}");
+        Console.WriteLine($"{x} * {y} = {x * y}");
+    }
+}
+`;

@@ -6,7 +6,9 @@ export type Language =
   | "cpp"
   | "java"
   | "go"
-  | "julia";
+  | "julia"
+  | "c"
+  | "csharp";
 
 export interface ExecutionResult {
   output: string;

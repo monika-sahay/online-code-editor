@@ -16,7 +16,8 @@ RUN apt-get update && \
       nodejs npm \
       golang \
       default-jdk \
-      g++ make bash \
+      g++ gcc make bash \
+      mono-runtime mono-devel \
       util-linux \
       ca-certificates curl gnupg xz-utils \
     && rm -rf /var/lib/apt/lists/*

@@ -163,10 +163,14 @@ async def execute_code(request: CodeRequest):
         script_path = os.path.join(temp_dir, filename)
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(request.code)
-
         prlimit = which("prlimit")
         out_bin = os.path.join(temp_dir, "a.out")
-        exe_path = os.path.join(temp_dir, "script.exe")  # mono
+        gocache = os.path.join(temp_dir, ".gocache")
+        gobuild = os.path.join(temp_dir, "build")
+        os.makedirs(gocache, exist_ok=True)
+        os.makedirs(gobuild, exist_ok=True)
+        out_bin = os.path.join(temp_dir, "a.out")
+        exe_path = os.path.join(temp_dir, "script.exe")  
 
         if IS_WINDOWS:
             base_map = {
@@ -207,6 +211,12 @@ async def execute_code(request: CodeRequest):
             cmd = ["prlimit", "--as=268435456", "--cpu=10", "--nproc=256", "--"] + cmd
 
         env = os.environ.copy()
+        if lang == "javascript":
+            secure_mode = os.getenv("SECURE_JS", "0") == "1"
+            if secure_mode:
+                cmd = ["node", "--jitless", "--stack_size=512", script_path]
+            else:
+                cmd = ["node", "--stack_size=512", "--max-old-space-size=64", script_path]
         if lang == "julia":
             env.setdefault("JULIA_NUM_THREADS", "1")
 

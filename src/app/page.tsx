@@ -110,7 +110,7 @@ export default function CodeEditorPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-200px)]">
           <Card className="flex flex-col">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-6">
                 <CardTitle className="text-lg">
                   {language.toUpperCase()} Code Editor
                 </CardTitle>
@@ -124,7 +124,7 @@ export default function CodeEditorPage() {
             </CardContent>
           </Card>
 
-          <Card className="flex flex-col">
+          <Card className="flex flex-col gap-6">
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Output</CardTitle>
             </CardHeader>
@@ -134,10 +134,7 @@ export default function CodeEditorPage() {
           </Card>
         </div>
 
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-lg">Connection Status</CardTitle>
-          </CardHeader>
+        <Card className="mt-26">
           <CardContent>
             <div className="text-sm text-muted-foreground">
               <ConnectionStatus />

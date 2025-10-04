@@ -5,38 +5,34 @@ import { useEffect, useState } from "react";
 type Ping = { ok: boolean; url: string; error?: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
-const FRONTEND_URL = process.env.NEXT_PUBLIC_FRONTEND_URL || "";
+const FRONTEND_URL =
+  process.env.NEXT_PUBLIC_FRONTEND_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 const MODE = (process.env.NEXT_PUBLIC_API_MODE || "queue").toLowerCase();
 
 const endpoint = MODE === "queue" ? "/submit" : "/execute";
 
 export default function ConnectionStatus() {
-  const [api, setApi] = useState<Ping>({ ok: false, url: `${API_URL}` });
-  const [front, setFront] = useState<Ping>({
-    ok: true,
-    url:
-      FRONTEND_URL ||
-      (typeof window !== "undefined" ? window.location.origin : ""),
+  const [api, setApi] = useState<Ping>({
+    ok: false,
+    url: `${API_URL}${endpoint}`,
   });
 
   useEffect(() => {
-    let abort = new AbortController();
+    const controller = new AbortController();
     (async () => {
       try {
         const r = await fetch(`${API_URL}/`, {
-          signal: abort.signal,
+          signal: controller.signal,
           cache: "no-store",
         });
         setApi({ ok: r.ok, url: `${API_URL}${endpoint}` });
-      } catch (e: any) {
-        setApi({
-          ok: false,
-          url: `${API_URL}${endpoint}`,
-          error: String(e?.message || e),
-        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setApi({ ok: false, url: `${API_URL}${endpoint}`, error: msg });
       }
     })();
-    return () => abort.abort();
+    return () => controller.abort();
   }, []);
 
   return (
@@ -44,7 +40,7 @@ export default function ConnectionStatus() {
       <div className="font-semibold mb-2">Connection Status</div>
 
       <Row label="Backend API" value={`${api.url}`} ok={api.ok} />
-      <Row label="Frontend" value={front.url} ok={true} />
+      <Row label="Frontend" value={FRONTEND_URL} ok={true} />
 
       <p className="mt-2 text-xs text-muted-foreground">
         {MODE === "queue"

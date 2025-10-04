@@ -1,0 +1,35 @@
+services:
+  - type: redis
+    name: codeq-redis
+    ipAllowList: []
+
+  - type: web
+    name: codeq-api
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    plan: starter
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: codeq-redis
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DOCKER_SANDBOX
+        value: "0"
+    healthCheckPath: /
+
+  - type: worker
+    name: codeq-worker
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    startCommand: "python worker.py"
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: codeq-redis
+          property: connectionString
+      - key: DOCKER_SANDBOX
+        value: "0"

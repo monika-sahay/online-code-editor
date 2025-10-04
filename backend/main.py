@@ -1,27 +1,26 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import subprocess
-import tempfile
-import os
-import json
-import logging
-import sys
-import time
+from pydantic import BaseModel, Field
+import subprocess, tempfile, os, json, logging, sys, time, shlex
 from shutil import which
-import shlex
 import platform
-import openai
 
-# --- OpenAI key (for /ai-complete) ---
+# --- OpenAI (for /ai-complete) ---
+import openai
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# --- Logging ---
+# --- Queue stack (NEW) ---
+from redis import Redis
+from rq import Queue
+from rq.job import Job
+
+# ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
-app = FastAPI(title="Code Execution API", version="1.0.0")
+app = FastAPI(title="Code Execution API", version="2.0.0")
 
+# ---------- CORS ----------
 origins = [
     "https://online-code-editor-nine-chi.vercel.app",
     "https://*.vercel.app",
@@ -33,8 +32,6 @@ origins = [
     "http://127.0.0.1:8000",
     "http://127.0.0.1:3000",
 ]
-
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -43,25 +40,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Models ---
-class CodeRequest(BaseModel):
-    code: str
-    language: str = "python"  # "python" | "r" | "javascript" | ...
-
-class CodeResponse(BaseModel):
-    output: str
-    error: str = ""
-    success: bool = True
-
-
-# --- OS helpers ---
+# ---------- Helpers ----------
 IS_WINDOWS = (os.name == "nt")
 
 def to_bash_path(p: str) -> str:
-    """
-    Convert a Windows path to POSIX style for Git Bash.
-    Uses cygpath if available, else best-effort.
-    """
     cp = which("cygpath")
     if cp:
         try:
@@ -69,39 +51,97 @@ def to_bash_path(p: str) -> str:
             return out.stdout.strip()
         except Exception:
             pass
-    # fallback
     p2 = p.replace("\\", "/")
     if len(p2) >= 2 and p2[1] == ":":
         drive = p2[0].lower()
         p2 = f"/{drive}{p2[2:]}"
     return p2
 
-def cleanup_dir(path: str, logger):
-    """Try remove temp dir with retries (Windows can hold locks briefly)."""
-    import shutil
-    for i in range(6):
-        try:
-            if os.path.exists(path):
-                shutil.rmtree(path)
-            return
-        except Exception:
-            time.sleep(0.25 * (i + 1))
-    logger.error(f"Failed to clean up temporary directory after retries: {path}")
+# ---------- Models ----------
+class CodeRequest(BaseModel):
+    code: str
+    language: str = "python"
 
+class CodeResponse(BaseModel):
+    output: str
+    error: str = ""
+    success: bool = True
 
-# --- Routes ---
-@app.get("/")
-async def root():
-    return {"message": "Code Execution API is running"}
+# ======== QUEUE MODE: API + Worker contract ========
 
+# 1) Redis connection (works in Docker Compose and in cloud)
+def get_redis():
+    # Prefer REDIS_URL if provided by cloud host; else use local service name "redis"
+    url = os.getenv("REDIS_URL")
+    if url:
+        return Redis.from_url(url)
+    return Redis(host=os.getenv("REDIS_HOST", "redis"), port=int(os.getenv("REDIS_PORT", "6379")), db=0)
 
-# --- Execute code ---
+r = get_redis()
+q = Queue(os.getenv("RQ_QUEUE", "exec"), connection=r)
+
+class ExecRequest(BaseModel):
+    language: str = Field(..., pattern="^(python|javascript|r|bash|go|julia|cpp|java|c|csharp)$")
+    code: str
+    stdin: str | None = None
+    timeout_sec: int = 8
+    mem_limit_mb: int = 256
+
+# Import after definition to avoid circulars if runner imports settings
+from runner import run_code  # <- your sandboxed executor (next section)
+
+@app.post("/submit", status_code=202)
+def submit(req: ExecRequest):
+    """
+    Enqueue a code-execution job. Returns job_id immediately.
+    """
+    job = q.enqueue(
+        run_code,
+        req.language,
+        req.code,
+        req.stdin,
+        req.timeout_sec,
+        req.mem_limit_mb,
+        job_timeout=req.timeout_sec + 2,   # worker-level hard cap
+        failure_ttl=3600,
+        result_ttl=3600
+    )
+    return {"job_id": job.id}
+
+@app.get("/status/{job_id}")
+def status(job_id: str):
+    job = Job.fetch(job_id, connection=r)
+    return {
+        "state": job.get_status(),                 # queued | started | finished | failed | canceled
+        "enqueued_at": job.enqueued_at,
+        "started_at": job.started_at,
+        "ended_at": job.ended_at,
+        "meta": job.meta or {}
+    }
+
+@app.get("/result/{job_id}")
+def result(job_id: str):
+    job = Job.fetch(job_id, connection=r)
+    if job.get_status() == "failed":
+        err = str(job.exc_info or "Execution failed")
+        raise HTTPException(500, detail={"state": "failed", "error": err})
+    if not job.is_finished:
+        # 425 Too Early – client should poll again
+        raise HTTPException(425, detail={"state": job.get_status()})
+    return job.result
+
+@app.post("/cancel/{job_id}")
+def cancel(job_id: str):
+    job = Job.fetch(job_id, connection=r)
+    job.cancel()
+    return {"state": "canceled"}
+
+# ======== (Optional) keep your synchronous /execute while you migrate ========
+
 @app.post("/execute", response_model=CodeResponse)
 async def execute_code(request: CodeRequest):
     """
-    Execute code in a temp sandbox dir (no nested containers).
-    Supports: python, r, javascript, bash, go, julia, cpp, java.
-    Uses subprocess with wall-clock timeout and (when available) prlimit caps.
+    Legacy sync route. You can remove this once the frontend switches to /submit/status/result.
     """
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code cannot be empty")
@@ -114,60 +154,31 @@ async def execute_code(request: CodeRequest):
         if lang not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}")
 
-        # 1) Determine file name and write user code
-        #    For Java the filename must match the public class.
         ext_map = {
-            "python": "py",
-            "r": "R",
-            "javascript": "js",
-            "bash": "sh",
-            "go": "go",
-            "julia": "jl",
-            "cpp": "cpp",
-            "java": "java",
-            "c": "c",
-            "csharp": "cs",
+            "python": "py", "r": "R", "javascript": "js", "bash": "sh",
+            "go": "go", "julia": "jl", "cpp": "cpp", "java": "java",
+            "c": "c", "csharp": "cs",
         }
-        filename = f"script.{ext_map[lang]}"
-        if lang == "java":
-            filename = "Main.java"
+        filename = "Main.java" if lang == "java" else f"script.{ext_map[lang]}"
         script_path = os.path.join(temp_dir, filename)
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(request.code)
 
-        logger.info(f"Executing {lang} code in temporary file: {script_path}")
-
         prlimit = which("prlimit")
         out_bin = os.path.join(temp_dir, "a.out")
-        gocache = os.path.join(temp_dir, ".gocache")
-        gobuild = os.path.join(temp_dir, "build")
-        os.makedirs(gocache, exist_ok=True)
-        os.makedirs(gobuild, exist_ok=True)
-        out_bin = os.path.join(temp_dir, "a.out")
-        exe_path = os.path.join(temp_dir, "script.exe")  # for Mono C#
+        exe_path = os.path.join(temp_dir, "script.exe")  # mono
 
-        # Normalize paths for shells/runtimes
-        posix_temp = to_bash_path(temp_dir) if IS_WINDOWS else temp_dir
-        posix_script = to_bash_path(script_path) if IS_WINDOWS else script_path
-
-        # Build base command per language (Windows vs Linux)
         if IS_WINDOWS:
             base_map = {
                 "python": ["python", script_path],
                 "r": ["Rscript", "--vanilla", script_path],
                 "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
-                # Bash (Git Bash / WSL): convert path first with to_bash_path
                 "bash": ["bash", to_bash_path(script_path)],
-                # Go can run directly without bash -lc
                 "go": ["go", "run", script_path],
                 "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
-                # C++: compile -> run
                 "cpp": ["cmd", "/c", f"g++ -O2 {script_path} -o {out_bin} && {out_bin}"],
-                # Java: compile -> run Main
                 "java": ["cmd", "/c", f"javac {script_path} && java -cp {temp_dir} Main"],
-                # C: compile -> run
                 "c": ["cmd", "/c", f"gcc -O2 {script_path} -o {out_bin} && {out_bin}"],
-                # C#: compile -> run via mono (if installed)
                 "csharp": ["cmd", "/c", f"mcs {script_path} -out:{exe_path} && mono {exe_path}"],
             }
         else:
@@ -180,99 +191,34 @@ async def execute_code(request: CodeRequest):
                 "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
                 "cpp": ["bash", "-lc", f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
                 "java": ["bash", "-lc", f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
-                "c": ["bash", "-lc",
-                    f"gcc -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
-
-                # C# via Mono (no network restores, fast)
-                "csharp": ["bash", "-lc",
-                        f"mcs {shlex.quote(script_path)} -out:{shlex.quote(exe_path)} && mono {shlex.quote(exe_path)}"],                
+                "c": ["bash", "-lc", f"gcc -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
+                "csharp": ["bash", "-lc", f"mcs {shlex.quote(script_path)} -out:{shlex.quote(exe_path)} && mono {shlex.quote(exe_path)}"],
             }
-
-        # 2) Base command per language
-        # base_map = {
-        #     "python": ["python3", script_path],
-        #     "r": ["Rscript", "--vanilla", script_path],
-        #     # Node with tighter memory, no JIT (matches NODE_OPTIONS too)
-        #     "javascript": ["node", "--jitless", "--stack_size=512", "--max-old-space-size=64", script_path],
-        #     "bash": ["bash", script_path],
-        #     # Build then run for more predictable timing
-        #     "go": [
-        #         "bash", "-lc",
-        #         "set -euo pipefail;"
-        #         f"export GOCACHE={shlex.quote(gocache)};"
-        #         f"export GOMODCACHE={shlex.quote(os.path.join(temp_dir, '.gomodcache'))};"
-        #         "export GOTOOLCHAIN=local;"        # avoid go toolchain downloads
-        #         f"cd {shlex.quote(temp_dir)};"
-        #         f"go run {shlex.quote(script_path)}"
-        #     ],
-        #     # Julia: fast startup flags to avoid heavy precompile
-        #     "julia": ["julia", "--startup-file=no", "--compile=min", "-O0", script_path],
-        #     "cpp": ["bash", "-lc",
-        #             f"g++ -O2 {shlex.quote(script_path)} -o {shlex.quote(out_bin)} && {shlex.quote(out_bin)}"],
-        #     # Java: expects public class Main in code
-        #     "java": ["bash", "-lc",
-        #             f"javac {shlex.quote(script_path)} && java -cp {shlex.quote(temp_dir)} Main"],
-        # }
 
         cmd = base_map[lang]
 
-        # --- runtime existence check ---
-        if lang == "julia" and which("julia") is None:
-            return CodeResponse(output="", error="Julia runtime not installed on server", success=False)
+        # runtime checks (examples)
         if lang == "r" and which("Rscript") is None:
             return CodeResponse(output="", error="Rscript runtime not installed on server", success=False)
         if lang == "javascript" and which("node") is None:
             return CodeResponse(output="", error="Node.js runtime not installed on server", success=False)
-        # (you can add similar checks for go, java, g++, etc.)
 
-
-        # 3) Best-effort limits
-        #    - Do NOT wrap node with prlimit --as=256MB (V8 needs big address space)
-        #    - Give Julia/Go a little more time (& allow address space)
-        # cap_with_prlimit = prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go"}
-        if prlimit and cmd[0] != "bash" and lang not in {"javascript", "julia", "go", "r"}:
+        if which("prlimit") and cmd[0] != "bash" and lang not in {"javascript", "julia", "go", "r"}:
             cmd = ["prlimit", "--as=268435456", "--cpu=10", "--nproc=256", "--"] + cmd
 
-        # Language-specific env (optional but useful)
         env = os.environ.copy()
-        if lang == "javascript":
-            secure_mode = os.getenv("SECURE_JS", "0") == "1"
-            if secure_mode:
-                cmd = ["node", "--jitless", "--stack_size=512", script_path]
-            else:
-                cmd = ["node", "--stack_size=512", "--max-old-space-size=64", script_path]
         if lang == "julia":
             env.setdefault("JULIA_NUM_THREADS", "1")
 
-        # 4) Execute with wall-clock timeout
         timeout = 30
         if lang in {"go", "julia", "java", "cpp"}:
-            timeout = 120  # allow compile / first-run costs
+            timeout = 120
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=temp_dir,
-            env=env,
-        )
-        # stderr = result.stderr.replace("Warning: disabling flag --expose_wasm due to conflicting flags", "")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=temp_dir, env=env)
 
-        # If we compiled only (Windows cpp/java), run the artifact now
-        if IS_WINDOWS and lang == "cpp":
-            if result.returncode != 0:
-                return CodeResponse(output=result.stdout, error=result.stderr, success=False)
-            # run the produced exe
-            run_res = subprocess.run([out_bin], capture_output=True, text=True, timeout=timeout, cwd=temp_dir)
-            return CodeResponse(output=run_res.stdout, error=run_res.stderr, success=(run_res.returncode == 0))
-
-        if IS_WINDOWS and lang == "java":
-            if result.returncode != 0:
-                return CodeResponse(output=result.stdout, error=result.stderr, success=False)
-            run_res = subprocess.run(["java", "-cp", temp_dir, "Main"], capture_output=True, text=True, timeout=timeout, cwd=temp_dir)
-            return CodeResponse(output=run_res.stdout, error=run_res.stderr, success=(run_res.returncode == 0))
-
+        if IS_WINDOWS and lang in {"cpp", "java"} and result.returncode == 0:
+            # already handled in command; fallthrough returns compilation step logs
+            pass
 
         if result.returncode == 0:
             return CodeResponse(output=result.stdout, error=result.stderr, success=True)
@@ -281,7 +227,7 @@ async def execute_code(request: CodeRequest):
 
     except subprocess.TimeoutExpired:
         logger.error("Code execution timed out")
-        return CodeResponse(output="", error=f"Code execution timed out", success=False)
+        return CodeResponse(output="", error="Code execution timed out", success=False)
     except FileNotFoundError as e:
         logger.error(f"Runtime not found: {e}")
         return CodeResponse(output="", error=f"Runtime not found: {e}", success=False)
@@ -289,28 +235,27 @@ async def execute_code(request: CodeRequest):
         logger.exception("Unexpected error")
         return CodeResponse(output="", error=f"Unexpected error: {str(e)}", success=False)
     finally:
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                import shutil
-                shutil.rmtree(temp_dir)
-                logger.info(f"Cleaned up temporary directory: {temp_dir}")
-            except Exception as e:
-                logger.error(f"Failed to clean up temporary directory: {e}")
+        try:
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil; shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"Failed to clean up temporary directory: {e}")
 
-# --- AI completion ---
+# ---------- Health ----------
+@app.get("/")
+async def root():
+    return {"message": "Code Execution API (queue-enabled) running"}
+
+# ---------- AI completion (unchanged) ----------
 @app.post("/ai-complete")
 async def ai_complete(request: Request):
     data = await request.json()
     code = data.get("code", "")
-    cursor_offset = data.get("cursorOffset")  # Optional: can use for context
-
     if not code.strip():
         return {"suggestion": ""}
 
-    prompt = (
-        "You are a coding assistant. Suggest the next line or completion for the following code:\n"
-        f"{code}\n# Suggest code completion below:\n"
-    )
+    prompt = ("You are a coding assistant. Suggest the next line or completion for the following code:\n"
+              f"{code}\n# Suggest code completion below:\n")
 
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     response = client.chat.completions.create(
@@ -324,7 +269,6 @@ async def ai_complete(request: Request):
     )
     suggestion = response.choices[0].message.content.strip()
     return {"suggestion": suggestion}
-
 
 if __name__ == "__main__":
     import uvicorn

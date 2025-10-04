@@ -39,7 +39,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
-COPY main.py .
+COPY . /app/
 
 # Drop privileges for runtime
 USER appuser

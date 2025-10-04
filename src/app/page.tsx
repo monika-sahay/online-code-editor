@@ -20,6 +20,7 @@ import {
 } from "@/constants/snippets";
 import { runCode } from "@/utils/api";
 import type { ExecutionResult, Language } from "@/types/editor";
+import ConnectionStatus from "@/components/ConnectionStatus";
 
 export default function CodeEditorPage() {
   const [language, setLanguage] = useState<Language>("python");
@@ -139,11 +140,7 @@ export default function CodeEditorPage() {
           </CardHeader>
           <CardContent>
             <div className="text-sm text-muted-foreground">
-              <p>
-                Backend API: http://localhost:8001/execute (sends{" "}
-                {"{ code, language }"})
-              </p>
-              <p>Frontend: http://localhost:3000</p>
+              <ConnectionStatus />
             </div>
           </CardContent>
         </Card>
